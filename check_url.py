@@ -1,113 +1,107 @@
-import json
 import base64
+import os
 import time
-import requests
-from colorama import Fore, Style, init
 
-# Ranglarni ishga tushirish
+import requests
+from colorama import Fore, init
+
 init(autoreset=True)
 
-# !!! BU YERGA O'ZINGIZNING VIRUSTOTAL API KALITINGIZNI YOZING !!!
-API_KEY = "Your_VirusTotal_Api_Key_Paste_Here"
+API_KEY = os.getenv("VT_API_KEY")
+VT_URL = "https://www.virustotal.com/api/v3"
 
-def advanced_local_analyze(url):
-    """ Sayt tarkibini o'zi yuklab olib, ichidagi kodlarni tahlil qiluvchi funksiya """
-    print(f"\n{Fore.BLUE}[*] Ichki chuqurlashtirilgan statik tahlil boshlandi...")
+PHISHING_WORDS = ["private key", "wallet", "login", "password",
+                  "verify account", "update now"]
+MALWARE_INDICATORS = [".exe", ".bat", ".dmg", "miner", "free_bitcoin"]
+
+
+def local_analysis(url):
+    """Download the page and scan its HTML for suspicious keywords."""
+    print(f"\n{Fore.BLUE}[*] Running local static analysis...")
     try:
-        # Sayt kodini yuklab olish
-        response = requests.get(url, timeout=5)
-        html_content = response.text.lower()
-        
-        # 1. Fishing indikatorlari
-        phishing_words = ["private key", "wallet", "login", "password", "verify account", "update now"]
-        found_phishing = [w for w in phishing_words if w in html_content]
-        
-        # 2. Zararli fayl indikatorlari
-        malware_indicators = [".exe", ".bat", ".dmg", "miner", "free_bitcoin"]
-        found_malware = [m for m in malware_indicators if m in html_content]
-        
-        # Xulosani chiqarish
-        print(f"{Fore.CYAN}--- STATIK TAHLIL NATIJALARI ---")
-        if found_phishing:
-            print(f"{Fore.RED}[!] FISHING XAVFI: Sayt ichida maxfiy ma'lumotlarni so'rovchi elementlar bor: {found_phishing}")
-        
-        if found_malware:
-            print(f"{Fore.RED}[!] MALWARE XAVFI: Sayt foydalanuvchiga shubhali dasturlarni yuklashni taklif qilmoqda: {found_malware}")
-            
-        if not found_phishing and not found_malware:
-            print(f"{Fore.GREEN}[+] Mahalliy tahlil: Sahifa kodida shubhali kontent aniqlanmadi.")
-        print(f"{Fore.CYAN}---------------------------------")
-            
+        html = requests.get(url, timeout=5).text.lower()
     except Exception as e:
-        print(f"{Fore.RED}[!] Sayt tarkibini mustaqil o'qib bo'lmadi (Ehtimol local yoki ommaviy havola emas): {e}")
+        print(f"{Fore.RED}[!] Could not read the page: {e}")
+        return
+
+    phishing = [w for w in PHISHING_WORDS if w in html]
+    malware = [m for m in MALWARE_INDICATORS if m in html]
+
+    print(f"{Fore.CYAN}--- LOCAL ANALYSIS ---")
+    if phishing:
+        print(f"{Fore.RED}[!] Possible phishing keywords found: {phishing}")
+    if malware:
+        print(f"{Fore.RED}[!] Possible malware indicators found: {malware}")
+    if not phishing and not malware:
+        print(f"{Fore.GREEN}[+] No suspicious content found in the page code.")
+    print(f"{Fore.CYAN}----------------------")
+
+
+def virustotal_check(url):
+    """Check the URL against the VirusTotal global database."""
+    headers = {"accept": "application/json", "x-apikey": API_KEY}
+    try:
+        r = requests.post(f"{VT_URL}/urls", data={"url": url},
+                          headers=headers, timeout=15)
+        if r.status_code == 401:
+            print(f"{Fore.RED}[!] Invalid VirusTotal API key.")
+            return
+        r.raise_for_status()
+
+        analysis_id = r.json()["data"]["id"]
+        print(f"\n{Fore.YELLOW}[*] Waiting for VirusTotal analysis...")
+        for _ in range(6):
+            a = requests.get(f"{VT_URL}/analyses/{analysis_id}",
+                             headers=headers, timeout=15)
+            if a.json()["data"]["attributes"]["status"] == "completed":
+                break
+            time.sleep(3)
+
+        url_id = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
+        report = requests.get(f"{VT_URL}/urls/{url_id}",
+                              headers=headers, timeout=15)
+        if report.status_code != 200:
+            print(f"{Fore.RED}[!] Could not get the report. Code: {report.status_code}")
+            return
+
+        attrs = report.json()["data"]["attributes"]
+        stats = attrs["last_analysis_stats"]
+        results = attrs["last_analysis_results"]
+
+        print(f"\n{Fore.CYAN}=== VIRUSTOTAL RESULTS ===")
+        print(f"{Fore.GREEN}Harmless:   {stats.get('harmless', 0)}")
+        print(f"{Fore.WHITE}Suspicious: {stats.get('suspicious', 0)}")
+        print(f"{Fore.RED}Malicious:  {stats.get('malicious', 0)}")
+        print(f"{Fore.CYAN}==========================\n")
+
+        if stats.get("malicious", 0) or stats.get("suspicious", 0):
+            print(f"{Fore.RED}[!] Warning! Security engines flagged this link:")
+            for engine, d in results.items():
+                if d["category"] in ("malicious", "suspicious"):
+                    print(f"  - {engine}: {d['result']} ({d['category']})")
+        else:
+            print(f"{Fore.GREEN}[+] VirusTotal: the link looks safe.")
+    except Exception as e:
+        print(f"{Fore.RED}[!] VirusTotal check failed: {e}")
 
 
 def check_url(url):
-    """ VirusTotal API orqali global tekshirish funksiyasi """
-    print(f"\n{Fore.BLUE}[*] Havola tekshirilmoqda: {url}")
-    
-    # Avval o'zimiz yaratgan ichki statik tahlilni ishga tushiramiz (Siz so'ragan antivirus qismi)
-    advanced_local_analyze(url)
-    
-    # So'ngra VirusTotal global bazasidan qidiramiz
-    url_id = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
-    headers = {
-        "accept": "application/json",
-        "x-apikey": API_KEY
-    }
-    
-    scan_url = f"https://www.virustotal.com/api/v3/urls"
-    data = {"url": url}
-    
-    try:
-        response = requests.post(scan_url, data=data, headers=headers)
-        if response.status_code == 401:
-            print(f"{Fore.RED}[!] Xato: API kalit noto'g'ri yoki kiritilmagan!")
-            return
-        
-        print(f"\n{Fore.YELLOW}[*] VirusTotal global antiviruslar bazasidan ma'lumotlar olinmoqda...")
-        time.sleep(1) 
-        
-        report_url = f"https://www.virustotal.com/api/v3/urls/{url_id}"
-        report_response = requests.get(report_url, headers=headers)
-        
-        if report_response.status_code == 200:
-            result = report_response.json()
-            stats = result['data']['attributes']['last_analysis_stats']
-            results = result['data']['attributes']['last_analysis_results']
-            
-            print(f"\n{Fore.CYAN}=== GLOBAL BAZA NATIJALARI ===")
-            print(f"{Fore.GREEN}Toza (Harmless): {stats.get('harmless', 0)}")
-            print(f"{Fore.WHITE}Shubhali (Suspicious): {stats.get('suspicious', 0)}")
-            print(f"{Fore.RED}Zararli (Malicious): {stats.get('malicious', 0)}")
-            print(f"{Fore.YELLOW}Fishing: {stats.get('phishing', 0)}")
-            print(f"{Fore.CYAN}==============================\n")
-            
-            if stats.get('malicious', 0) > 0 or stats.get('suspicious', 0) > 0:
-                print(f"{Fore.RED}[!] Diqqat! Global motorlar xavf aniqladi:")
-                for engine, details in results.items():
-                    if details['category'] in ['malicious', 'suspicious']:
-                        print(f"  - {Fore.YELLOW}{engine}{Fore.RESET}: {details['result']} ({details['category']})")
-            else:
-                print(f"{Fore.GREEN}[+] Global baza: Havola xavfsiz deb topildi.")
-                
-        else:
-            print(f"{Fore.RED}[!] Global hisobotni olib bo'lmadi. Kod: {report_response.status_code}")
-            
-    except Exception as e:
-        print(f"{Fore.RED}[!] Global tekshiruvda xatolik: {str(e)}")
+    print(f"\n{Fore.BLUE}[*] Checking: {url}")
+    local_analysis(url)
+    virustotal_check(url)
 
 
 if __name__ == "__main__":
-    print(f"{Fore.MAGENTA}=== smartdxx URL Scanner (Hybrid Mode) ===")
-    if API_KEY == "YOUR_VIRUSTOTAL_API_KEY_HERE":
-        print(f"{Fore.RED}[!] Iltimos, kod ichiga shaxsiy VirusTotal API kalitingizni kiriting!")
+    print(f"{Fore.MAGENTA}=== URL Scanner (Hybrid Mode) ===")
+    if not API_KEY:
+        print(f"{Fore.RED}[!] Set your VirusTotal API key in the VT_API_KEY "
+              f"environment variable (see README).")
     else:
         while True:
-            target_url = input(f"\n{Fore.GREEN}Tekshirish uchun URL kiriting (chiqish uchun 'q'): {Fore.RESET}").strip()
-            if target_url.lower() == 'q':
-                print(f"{Fore.MAGENTA}Dastur yakunlandi.")
+            target = input(f"\n{Fore.GREEN}Enter a URL (or 'q' to quit): {Fore.RESET}").strip()
+            if target.lower() == "q":
+                print(f"{Fore.MAGENTA}Goodbye.")
                 break
-            if not target_url.startswith(("http://", "https://")):
-                target_url = "https://" + target_url
-            check_url(target_url)
+            if not target.startswith(("http://", "https://")):
+                target = "https://" + target
+            check_url(target)
