@@ -1,12 +1,27 @@
-# check-url-links
-Bu url havolalarni zararlimi yoqmi tekshiradi
+# URL Link Checker
 
-usage: open virustotal.com and sign up/sign in, open your profile, copy api key and paste in code your api key
+A small Python tool that checks whether a URL is safe or suspicious before you open it.
 
-open terminal:
-  pip install Flask
+## Features
+- Checks a link and reports whether it looks safe or harmful
+- Simple command-line usage
+- <add one more real feature your code has>
 
-  python check_url.py
+## Requirements
+- Python 3.9+
+- <list libraries your code imports, e.g. requests>
 
-<img width="1112" height="397" alt="image" src="https://github.com/user-attachments/assets/cd5126a8-bd00-4f54-abd6-501ef0b41fa6" />
+## Installation
+```bash
+git clone https://github.com/meyrlankzh/check-url-links.git
+cd check-url-links
+pip install -r requirements.txt
+```
 
+## Usage
+```bash
+python <your_file>.py
+```
+Enter a URL when asked.
+
+## Example
